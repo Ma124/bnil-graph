@@ -18,6 +18,8 @@ from binaryninja import *
 from collections import defaultdict
 import re
 
+AnyILInstruction = LowLevelILInstruction | MediumLevelILInstruction | HighLevelILInstruction
+
 Settings().register_group("bnil-graph", "BNIL Graph")
 Settings().register_setting("bnil-graph.showCommon", """
     {
@@ -177,14 +179,15 @@ def graph_il_insn(g, head, il, label=None):
     head.add_outgoing_edge(BranchType.UnconditionalBranch, record)
 
 
-def graph_il(g, head, type, il):
-    # type: (FlowGraph, FlowGraphNode, str, LowLevelILInstruction) -> None
-
+def graph_il(g: FlowGraph, head: FlowGraphNode, type: Optional[str], il: AnyILInstruction):
     il_desc = binaryninja.FlowGraphNode(g)
 
-    lines = [
+    header = [
         "{}".format(type),
         "",
+    ] if type is not None else []
+
+    lines = header + [
         DisassemblyTextLine(
             [
                 InstructionTextToken(
@@ -217,15 +220,6 @@ def graph_il(g, head, type, il):
     g.append(il_desc)
 
     head.add_outgoing_edge(BranchType.UnconditionalBranch, il_desc)
-
-
-def graph_ils(bv, g, head, func, addr):
-    lookup = collect_ils(bv, func)
-
-    for il_type in sorted(lookup):
-        ils = lookup[il_type][addr]
-        for il in sorted(ils):
-            graph_il(g, head, il_type, il)
 
 
 def collect_ils(bv, func):
@@ -310,9 +304,35 @@ def graph_bnil(bv, addr):
     head.lines = [tokens]
     g.append(head)
 
-    graph_ils(bv, g, head, function, addr)
+    lookup = collect_ils(bv, function)
 
-    show_graph_report(bv, g, "Instruction Graph ({:#x})".format(addr))
+    for il_type in sorted(lookup):
+        ils = lookup[il_type][addr]
+        for il in sorted(ils):
+            graph_il(g, head, il_type, il)
+
+    show_graph_report(bv, g, f"Instruction Graph ({addr:#x})")
+
+
+def graph_current_bnil(bv, inst: AnyILInstruction):
+    g = binaryninja.FlowGraph()
+
+    head = binaryninja.FlowGraphNode(g)
+    head.lines = [inst.tokens]
+    g.append(head)
+
+    graph_il(g, head, None, inst)
+
+    if isinstance(inst, LowLevelILInstruction):
+        kind = "LLIL"
+    elif isinstance(inst, MediumLevelILInstruction):
+        kind = "MLIL"
+    elif isinstance(inst, HighLevelILInstruction):
+        kind = "HLIL"
+    else:
+        kind = "???"
+
+    show_graph_report(bv, g, f"Instruction Graph ({kind}) ({inst.address:#x})")
 
 
 def match_condition(name, o):
@@ -412,7 +432,19 @@ def match_bnil(bv, addr):
 
 
 PluginCommand.register_for_address(
-    "BNIL\\Instruction Graph", "View BNIL Instruction Information", graph_bnil
+    "BNIL\\Instruction Graph (All ILs)", "View BNIL Instruction Information (All ILs)", graph_bnil
+)
+
+PluginCommand.register_for_low_level_il_instruction(
+    "BNIL\\Instruction Graph (LLIL)", "View BNIL Instruction Information (LLIL)", graph_current_bnil
+)
+
+PluginCommand.register_for_medium_level_il_instruction(
+    "BNIL\\Instruction Graph (MLIL)", "View BNIL Instruction Information (MLIL)", graph_current_bnil
+)
+
+PluginCommand.register_for_high_level_il_instruction(
+    "BNIL\\Instruction Graph (HLIL)", "View BNIL Instruction Information (HLIL)", graph_current_bnil
 )
 
 PluginCommand.register_for_address(
